@@ -36,9 +36,16 @@ and it runs entirely on your own machine, for free.
 
 ## Screenshots
 
-| Game list / dashboard | Coaching report | Variation: played vs. best |
-| --- | --- | --- |
-| ![Game list](docs/screenshots/game-list.png) | ![Coaching](docs/screenshots/coaching.png) | ![Variation](docs/screenshots/variation.png) |
+| Game list / dashboard | Coaching report |
+| --- | --- |
+| ![Game list](docs/screenshots/game-list.png) | ![Coaching](docs/screenshots/coaching.png) |
+
+**Variation walkthrough** — click a key moment to compare what you played (red) against
+the engine's best line (green), then step deeper to see the position a better plan reaches:
+
+| Decision point: played vs. best | Stepping into the better line |
+| --- | --- |
+| ![Variation](docs/screenshots/variation.png) | ![Step-through](docs/screenshots/step-through.png) |
 
 ## Requirements
 

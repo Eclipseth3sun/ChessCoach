@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+
+# Node / frontend build
+node_modules/
+frontend/dist/
+
+# Engine binary (download separately — GPL, ~50MB)
+engines/
+
+# Local data & secrets
+chesscoach.db
+settings.json
+
+# Private / non-shipping
+content/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

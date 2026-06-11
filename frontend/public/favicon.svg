@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6ea8fe"/>
+      <stop offset="1" stop-color="#3a619e"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="url(#bg)"/>
+  <text x="24" y="35" font-size="30" text-anchor="middle" fill="#fff"
+        font-family="'Segoe UI Symbol','Apple Symbols','Noto Sans Symbols2',sans-serif">&#9822;</text>
+</svg>

@@ -114,6 +114,7 @@ def game(game_id: int):
         g = db.get_game(conn, game_id)
     if g is None:
         raise HTTPException(404, "game not found")
+    g["time_report"] = engine.time_report(g.get("moves") or [], g.get("user_color"))
     return g
 
 

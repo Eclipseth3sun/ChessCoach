@@ -47,6 +47,12 @@ _GROUNDING = """GROUNDING RULES (follow strictly — accuracy matters more than 
   use ONLY the "CONSEQUENCES" section. If CONSEQUENCES says the move attacks NO enemy pieces, you
   must NOT say it attacks or pressures anything. If you want to write "attacks the X on e5", the
   CONSEQUENCES must list "X on e5" — otherwise do not write it.
+- PIECE TYPE IS FIXED BY THE DATA. The piece on a square is exactly the type stated in PIECE
+  PLACEMENT, CONSEQUENCES, or "Captures in the engine's line". Never substitute a different type.
+  If c6 holds a queen, never call it a knight; if c8 holds a rook, never call it a bishop.
+- Do NOT say a move "captures", "wins", or "gains" a piece unless the "Captures in the engine's
+  line" section lists that exact capture. Attacking a piece is not the same as winning it —
+  the enemy can move it. Don't claim material gain that the capture list doesn't show.
 - Do not invent pawn-structure features (passed/isolated/backward pawns, outposts, open files).
   Use only what the "Position facts" section states. If it isn't listed, it isn't there.
 - If a claim isn't supported by the placement, facts, consequences, or engine lines, do not make it."""
@@ -96,6 +102,14 @@ and the key moments already analyzed. Write the opening assessment, recurring st
 study takeaways. Speak to the student directly ("you"). Ground every claim in the data given — do
 not invent specific squares or piece locations you were not provided.
 
+You are given an EVALUATION SCOREBOARD. Your opening_summary MUST agree with it about who stood
+better — never say you came out of the opening worse if the scoreboard shows you winning, or
+vice versa.
+
+If a TIME USAGE section is provided and it shows the student rushing (sped up, mistakes played
+quickly, or lots of unused clock), include ONE takeaway about spending time on critical moves —
+specifically a pre-move check for hanging pieces, checks, and captures. Cite the real numbers.
+
 Respond with a SINGLE JSON object using EXACTLY these keys:
 {{
   "opening_summary": "<2-4 sentences: the opening and pawn structure, how you handled it, and who stood better coming out of the opening and why>",
@@ -116,6 +130,68 @@ def _safe_consequences(board: chess.Board, uci: str | None) -> str:
         return features.move_consequences(board, chess.Move.from_uci(uci))
     except Exception:
         return ""
+
+
+def _annotate_captures(board_before_fen: str, san_line: str) -> str:
+    """Spell out every capture in the engine's line with exact piece identities, so the
+    model can't misname what a move 'takes' (e.g. queen-on-c6 narrated as a knight)."""
+    if not san_line:
+        return ""
+    b = chess.Board(board_before_fen)
+    notes = []
+    for san in san_line.split():
+        try:
+            mv = b.parse_san(san)
+        except Exception:
+            break
+        if b.is_capture(mv):
+            mover = b.piece_at(mv.from_square)
+            victim = b.piece_at(mv.to_square)
+            vname = chess.piece_name(victim.piece_type) if victim else "pawn"
+            mname = chess.piece_name(mover.piece_type) if mover else "piece"
+            notes.append(f"{san}: {mname} takes {vname} on {chess.square_name(mv.to_square)}")
+        b.push(mv)
+    if not notes:
+        return "Captures in the engine's line: NONE — this line wins no material.\n"
+    return ("Captures in the engine's line (exact identities — use these, never guess a "
+            "piece type):\n  " + "; ".join(notes) + "\n")
+
+
+def _scoreboard(moves: list[dict], user_white: bool) -> str:
+    """A compact eval timeline from the student's perspective — the ground truth for who
+    stood better, so the opening summary can't invert it."""
+    if not moves:
+        return ""
+
+    def ucp(m):
+        if m["eval_mate"] is not None:
+            return 10000 if ((m["eval_mate"] > 0) == user_white) else -10000
+        cp = m["eval_cp"] or 0
+        return cp if user_white else -cp
+
+    def word(cp):
+        if cp >= 250: return "winning"
+        if cp >= 80: return "clearly better"
+        if cp > -80: return "roughly equal"
+        if cp > -250: return "clearly worse"
+        return "losing"
+
+    opening = None
+    for m in moves:
+        if m["ply"] <= 24:
+            opening = m
+    last = moves[-1]
+    samples = [f"m{(m['ply'] + 1) // 2}:{_persp_eval(m['eval_cp'], m['eval_mate'], user_white)}"
+               for m in moves if m["ply"] % 8 == 0 or m["ply"] == last["ply"]]
+    lines = ["EVALUATION SCOREBOARD (engine, from YOUR perspective, + = better for you. This is the "
+             "ground truth for who stood better — your opening_summary MUST agree with it):"]
+    if opening is not None:
+        lines.append(f"- Out of the opening (move {(opening['ply'] + 1) // 2}) you were "
+                     f"{word(ucp(opening))} ({_persp_eval(opening['eval_cp'], opening['eval_mate'], user_white)}).")
+    lines.append(f"- Final: {word(ucp(last))} "
+                 f"({_persp_eval(last['eval_cp'], last['eval_mate'], user_white)}).")
+    lines.append("- Trajectory: " + " ".join(samples))
+    return "\n".join(lines) + "\n"
 
 
 def _persp_eval(cp: int | None, mate: int | None, user_white: bool) -> str:
@@ -149,6 +225,8 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
     played_consequences = _safe_consequences(board, m.get("uci"))
     candidates_block = _candidates_block(candidates or [], user_white)
     played_eval = _persp_eval(m.get("eval_cp"), m.get("eval_mate"), user_white)
+    time_line = (f"TIME: you spent {m['time_spent']:.0f}s on this move.\n"
+                 if m.get("time_spent") is not None else "")
     move_no = (m["ply"] + 1) // 2
     dots = "." if m["ply"] % 2 == 1 else "..."
     mtype = m.get("moment_type", "negative")
@@ -159,6 +237,7 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
                 f"Explain WHY this was the right strategic/positional decision.")
         loss_line = ""
         best_consequences = ""
+        best_captures = ""
     else:
         label = "MISTAKE"
         task = (f"You ({side}) played {move_no}{dots} {m['san']}; the engine preferred "
@@ -167,6 +246,7 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
         loss_line = f"Win% your move gave away: {m['win_pct_loss']}\n"
         bc = _safe_consequences(board, m.get("best_uci"))
         best_consequences = f"For comparison, the engine's move {m['best_san']} —\n{bc}\n" if bc else ""
+        best_captures = _annotate_captures(board_before_fen, m.get("best_line") or "")
     return (
         f"--- {label} at ply {m['ply']} — you are {side} ---\n"
         f"{task}\n"
@@ -176,9 +256,11 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
         f"Position facts:\n{facts}\n"
         f"{candidates_block}"
         f"YOU PLAYED {m['san']} (eval after your move from your perspective: {played_eval}).\n"
+        f"{time_line}"
         f"{played_consequences}\n"
         f"{best_consequences}"
         f"Engine's best line from here: {m['best_line'] or m['best_san']}\n"
+        f"{best_captures}"
     )
 
 
@@ -202,6 +284,21 @@ def _summary_user_prompt(game: dict, user_color: str, moments_out: list[dict],
     moment_list = "\n".join(
         f"- ply {km['ply']} ({km['moment_type']}): {km['title']}" for km in moments_out
     ) or "(no individually flagged moments)"
+    scoreboard = _scoreboard(game.get("moves") or [], user_color == "white")
+    tr = engine.time_report(game.get("moves") or [], user_color)
+    time_block = ""
+    if tr:
+        rushed = "; ".join(
+            f"{r['san']} ({r['classification']}, {r['time_spent']:.0f}s)" for r in tr["rushed"]
+        ) or "none under 25s"
+        unused = f"{tr['unused_secs'] / 60:.1f} min" if tr["unused_secs"] is not None else "unknown"
+        time_block = (
+            "TIME USAGE (clock data from the game):\n"
+            f"- Average {tr['avg']:.0f}s/move; early {tr['early_avg']:.0f}s vs late {tr['late_avg']:.0f}s "
+            f"({'SPED UP markedly in the second half' if tr['sped_up'] else 'fairly steady'}).\n"
+            f"- Clock left unused at the end: {unused}.\n"
+            f"- Mistakes played quickly (<25s): {rushed}.\n\n"
+        )
     return (
         f"Student: {user_name} ({user_elo or '?'} elo), playing {user_color}.\n"
         f"Opponent: {opponent}. Result: {game['result']}. "
@@ -209,6 +306,8 @@ def _summary_user_prompt(game: dict, user_color: str, moments_out: list[dict],
         f"Time control: {game.get('time_control')}.\n"
         f"Student's move quality: {counts['blunder']} blunders, {counts['mistake']} mistakes, "
         f"{counts['inaccuracy']} inaccuracies.\n\n"
+        f"{scoreboard}\n"
+        f"{time_block}"
         f"Key moments already analyzed:\n{moment_list}\n\n"
         f"Full game:\n{movetext}\n\n"
         f"Allowed theme slugs: {', '.join(THEME_SLUGS)}\n"

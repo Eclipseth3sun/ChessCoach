@@ -7,16 +7,23 @@ const BADGES = {
   blunder: '??',
 }
 
+const RUSH_THRESHOLD = 25  // seconds — a mistake played faster than this is flagged
+
 function Move({ move, currentPly, onSelect }) {
   if (!move) return <span />
   const badge = BADGES[move.classification]
+  const hasTime = badge && move.time_spent != null
+  const rushed = move.time_spent != null && move.time_spent < RUSH_THRESHOLD
+    && ['inaccuracy', 'mistake', 'blunder'].includes(move.classification)
   return (
     <span
       className={`move ${move.ply === currentPly ? 'current' : ''}`}
       onClick={() => onSelect(move.ply)}
+      title={move.time_spent != null ? `${Math.round(move.time_spent)}s spent` : undefined}
     >
       {move.san}
       {badge && <span className={`badge ${move.classification}`}>{badge}</span>}
+      {hasTime && <span className={`mtime ${rushed ? 'rushed' : ''}`}>{Math.round(move.time_spent)}s</span>}
     </span>
   )
 }

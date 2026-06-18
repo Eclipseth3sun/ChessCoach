@@ -325,6 +325,17 @@ export default function GameView({ gameId }) {
           <div className="status-line">
             {game.opening || game.eco} · {game.time_control} · {(game.played_at || '').slice(0, 10)}
           </div>
+          {analyzed && game.time_report && (
+            <div className={`time-usage ${game.time_report.sped_up ? 'warn' : ''}`}>
+              ⏱ {Math.round(game.time_report.avg)}s/move avg
+              {game.time_report.sped_up &&
+                ` · sped up ${Math.round(game.time_report.early_avg)}→${Math.round(game.time_report.late_avg)}s`}
+              {game.time_report.unused_secs != null &&
+                ` · ${Math.round(game.time_report.unused_secs / 60)} min unused`}
+              {game.time_report.rushed.length > 0 &&
+                ` · ${game.time_report.rushed.length} rushed mistake${game.time_report.rushed.length > 1 ? 's' : ''}`}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
             <button
               className="primary" onClick={startAnalysis} disabled={engineRunning}

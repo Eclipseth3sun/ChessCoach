@@ -202,6 +202,15 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .move .badge { font-size: 11px; margin-left: 3px; }
 .badge.brilliant { color: #26c2a3; }
 .badge.great { color: #749bbf; }
+.move .mtime { font-size: 10px; color: var(--text-dim); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.move .mtime.rushed { color: var(--mistake); font-weight: 600; }
+
+/* time-usage summary in the game card */
+.time-usage {
+  font-size: 12px; color: var(--text-dim); margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.time-usage.warn { color: var(--inaccuracy); }
 .badge.best { color: var(--best); }
 .badge.inaccuracy { color: var(--inaccuracy); }
 .badge.mistake { color: var(--mistake); }

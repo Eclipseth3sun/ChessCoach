@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS moves (
     best_line TEXT,                 -- SAN pv of the best line, space separated
     classification TEXT,            -- best/good/inaccuracy/mistake/blunder
     win_pct_loss REAL,              -- mover's win% lost by this move vs engine best
+    time_spent REAL,                -- seconds the mover spent on this move (from PGN %clk)
+    clock_left REAL,                -- seconds left on the mover's clock after the move
     PRIMARY KEY (game_id, ply)
 );
 
@@ -71,6 +73,11 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # migrations for DBs created before a column existed
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(moves)")}
+        for col in ("time_spent", "clock_left"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE moves ADD COLUMN {col} REAL")
 
 
 def insert_game(conn: sqlite3.Connection, g: dict) -> int | None:
@@ -126,9 +133,11 @@ def save_engine_pass(conn: sqlite3.Connection, game_id: int, moves: list[dict]) 
     conn.execute("DELETE FROM moves WHERE game_id = ?", (game_id,))
     conn.executemany(
         """INSERT INTO moves (game_id, ply, san, uci, fen_after, eval_cp, eval_mate,
-               best_uci, best_san, best_line, classification, win_pct_loss)
+               best_uci, best_san, best_line, classification, win_pct_loss,
+               time_spent, clock_left)
            VALUES (:game_id, :ply, :san, :uci, :fen_after, :eval_cp, :eval_mate,
-               :best_uci, :best_san, :best_line, :classification, :win_pct_loss)""",
+               :best_uci, :best_san, :best_line, :classification, :win_pct_loss,
+               :time_spent, :clock_left)""",
         moves,
     )
     conn.execute("UPDATE games SET engine_analyzed = 1 WHERE id = ?", (game_id,))

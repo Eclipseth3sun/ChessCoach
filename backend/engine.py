@@ -5,6 +5,7 @@ slip in an already-lost position isn't branded a blunder.
 """
 import io
 import math
+import re
 from pathlib import Path
 
 import chess
@@ -14,6 +15,27 @@ import chess.pgn
 from . import db, settings
 
 ENGINE_PATH = Path(__file__).resolve().parent.parent / "engines" / "stockfish.exe"
+
+_CLK_RE = re.compile(r"%clk\s*([0-9:.]+)")
+
+
+def _clk_secs(text: str) -> float:
+    parts = [float(p) for p in text.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0.0)
+    h, m, s = parts
+    return h * 3600 + m * 60 + s
+
+
+def _parse_time_control(tc: str | None) -> tuple[int, int]:
+    """chess.com time control 'base+inc' (seconds) -> (base, increment)."""
+    if not tc:
+        return (0, 0)
+    try:
+        base, _, inc = tc.partition("+")
+        return (int(base), int(inc) if inc else 0)
+    except ValueError:
+        return (0, 0)
 
 # lichess centipawn -> win% curve
 def win_pct(cp: int) -> float:
@@ -86,13 +108,24 @@ def analyze_game(game_id: int, progress: dict | None = None) -> None:
     """Run the engine over every position of a stored game and persist results."""
     cfg = settings.load()
     with db.connect() as conn:
-        game_row = conn.execute("SELECT pgn FROM games WHERE id = ?", (game_id,)).fetchone()
+        game_row = conn.execute(
+            "SELECT pgn, time_control FROM games WHERE id = ?", (game_id,)
+        ).fetchone()
     if game_row is None:
         raise ValueError(f"game {game_id} not found")
 
     game = chess.pgn.read_game(io.StringIO(game_row["pgn"]))
     nodes = list(game.mainline())
     limit = chess.engine.Limit(time=cfg["engine_movetime_ms"] / 1000)
+
+    # clock data (from PGN %clk comments) -> time spent per move
+    base, inc = _parse_time_control(game_row["time_control"])
+    clk_by_ply: dict[int, float] = {}
+    for n in nodes:
+        m = _CLK_RE.search(n.comment or "")
+        if m:
+            clk_by_ply[n.ply()] = _clk_secs(m.group(1))
+    prev_clk = {True: float(base), False: float(base)}  # last clock per side (white=True)
 
     engine = chess.engine.SimpleEngine.popen_uci(str(ENGINE_PATH))
     engine.configure({"Threads": cfg["engine_threads"]})
@@ -136,9 +169,18 @@ def analyze_game(game_id: int, progress: dict | None = None) -> None:
             else:
                 classification = classify(loss, False)
 
+            ply = i + 1
+            clk_after = clk_by_ply.get(ply)
+            time_spent = clock_left = None
+            if clk_after is not None:
+                # think time = clock before this move (+ increment credited) - clock after
+                time_spent = round(max(0.0, prev_clk[mover_white] + inc - clk_after), 1)
+                clock_left = round(clk_after, 1)
+                prev_clk[mover_white] = clk_after
+
             moves.append({
                 "game_id": game_id,
-                "ply": i + 1,
+                "ply": ply,
                 "san": san,
                 "uci": move.uci(),
                 "fen_after": board.fen(),
@@ -149,6 +191,8 @@ def analyze_game(game_id: int, progress: dict | None = None) -> None:
                 "best_line": best_line,
                 "classification": classification,
                 "win_pct_loss": round(loss, 1),
+                "time_spent": time_spent,
+                "clock_left": clock_left,
             })
             prev_cp = cp
             prev_pv = info.get("pv") or []
@@ -246,12 +290,16 @@ def key_moments(moves: list[dict], user_color: str | None,
         key=lambda m: m["win_pct_loss"], reverse=True,
     )[:max_negative]
 
-    # Positive: played engine's best in a contested or defensive situation.
-    # We use eval_cp of the PREVIOUS move as the pre-move eval.
+    # Positive: strong moves worth praising. Brilliancies (sound sacs) always
+    # qualify; best/great moves qualify when you weren't already cruising.
     eval_by_ply = {m["ply"]: m["eval_cp"] or 0 for m in moves}
     positive = []
     for m in user_plies:
-        if m["classification"] != "best":
+        cls = m["classification"]
+        if cls not in ("best", "great", "brilliant"):
+            continue
+        if cls == "brilliant":
+            positive.append({**m, "moment_type": "positive"})
             continue
         cp_before = eval_by_ply.get(m["ply"] - 1, 0)
         mover_white = m["ply"] % 2 == 1
@@ -260,7 +308,47 @@ def key_moments(moves: list[dict], user_color: str | None,
         if wp_before < 65:
             positive.append({**m, "moment_type": "positive"})
 
+    # prefer brilliancies, then biggest swings handled by ply-sort; cap the count
+    positive.sort(key=lambda m: (m["classification"] != "brilliant", m["ply"]))
     positive = positive[:max_positive]
     all_moments = [{**m, "moment_type": "negative"} for m in negative] + positive
     all_moments.sort(key=lambda m: m["ply"])
     return all_moments
+
+
+def time_report(moves: list[dict], user_color: str | None) -> dict | None:
+    """Time-usage analysis for the user's moves: pace, unused clock, and mistakes
+    played quickly. Targets the 'I rush and blunder despite having time' failure mode.
+    Returns None when the game has no clock data.
+    """
+    def is_user(m):
+        return user_color is None or (user_color == "white") == (m["ply"] % 2 == 1)
+
+    um = [m for m in moves if is_user(m) and m.get("time_spent") is not None]
+    if len(um) < 6:
+        return None
+
+    times = [m["time_spent"] for m in um]
+    avg = sum(times) / len(times)
+    # pace: first third vs last third of the user's moves
+    third = max(1, len(um) // 3)
+    early = sum(times[:third]) / third
+    late = sum(times[-third:]) / third
+    unused = um[-1].get("clock_left")
+
+    # mistakes/blunders played quickly (absolute, the clearest "didn't think" signal)
+    rushed = [
+        {"ply": m["ply"], "san": m["san"], "classification": m["classification"],
+         "time_spent": m["time_spent"], "win_pct_loss": m.get("win_pct_loss")}
+        for m in um
+        if m["classification"] in ("inaccuracy", "mistake", "blunder")
+        and m["time_spent"] is not None and m["time_spent"] < 25
+    ]
+    return {
+        "avg": round(avg, 1),
+        "early_avg": round(early, 1),
+        "late_avg": round(late, 1),
+        "sped_up": late < 0.7 * early and early - late >= 10,
+        "unused_secs": round(unused, 1) if unused is not None else None,
+        "rushed": rushed,
+    }

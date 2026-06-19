@@ -53,6 +53,12 @@ _GROUNDING = """GROUNDING RULES (follow strictly — accuracy matters more than 
 - Do NOT say a move "captures", "wins", or "gains" a piece unless the "Captures in the engine's
   line" section lists that exact capture. Attacking a piece is not the same as winning it —
   the enemy can move it. Don't claim material gain that the capture list doesn't show.
+- A MATERIAL line states exactly what each side has. NEVER mention a piece type a side does not
+  have — e.g. do not mention a bishop, "the bishop pair", or a "bad bishop" if MATERIAL shows
+  that side has no bishops. Same for queens, rooks, knights.
+- Do NOT call a move a "fork" (or say it attacks two things) unless its CONSEQUENCES "attacks"
+  line names TWO OR MORE enemy pieces — a check counts as attacking the king. If the move attacks
+  only one piece, it is not a fork: do not invent a second target.
 - Do not invent pawn-structure features (passed/isolated/backward pawns, outposts, open files).
   Use only what the "Position facts" section states. If it isn't listed, it isn't there.
 - If a claim isn't supported by the placement, facts, consequences, or engine lines, do not make it."""
@@ -221,6 +227,7 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
     board = chess.Board(board_before_fen)
     facts = features.describe(board)
     placement = features.piece_placement(board)
+    material = features.material_summary(board)
     user_white = user_color == "white"
     played_consequences = _safe_consequences(board, m.get("uci"))
     candidates_block = _candidates_block(candidates or [], user_white)
@@ -253,6 +260,7 @@ def _moment_block(m: dict, board_before_fen: str, user_color: str,
         f"{loss_line}"
         f"PIECE PLACEMENT before your move (use ONLY these squares — do not invent others):\n"
         f"{placement}\n"
+        f"{material}\n"
         f"Position facts:\n{facts}\n"
         f"{candidates_block}"
         f"YOU PLAYED {m['san']} (eval after your move from your perspective: {played_eval}).\n"

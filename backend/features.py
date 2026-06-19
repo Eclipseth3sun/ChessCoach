@@ -221,6 +221,31 @@ def piece_placement(board: chess.Board) -> str:
     return "\n".join(lines)
 
 
+def material_summary(board: chess.Board) -> str:
+    """What each side actually has on the board, with absent piece types named
+    explicitly — so the model can't claim e.g. a 'bishop pair' when there are no
+    bishops. The roster lists positions; this states presence/absence outright."""
+    names = {chess.QUEEN: "queen", chess.ROOK: "rook",
+             chess.BISHOP: "bishop", chess.KNIGHT: "knight"}
+    lines = []
+    for color, who in ((chess.WHITE, "White"), (chess.BLACK, "Black")):
+        have = []
+        for pt in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT):
+            n = len(board.pieces(pt, color))
+            if n:
+                have.append(f"{n} {names[pt]}{'s' if n > 1 else ''}")
+        npawn = len(board.pieces(chess.PAWN, color))
+        have.append(f"{npawn} pawn{'s' if npawn != 1 else ''}")
+        absent = [names[pt] + "s" for pt in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT)
+                  if not board.pieces(pt, color)]
+        line = f"{who} has: {', '.join(have)}"
+        if absent:
+            line += f"  — NO {', no '.join(absent)}"
+        lines.append(line)
+    return ("MATERIAL on the board (never reference a piece type a side does NOT have):\n"
+            + "\n".join(lines))
+
+
 def move_consequences(board: chess.Board, move: chess.Move) -> str:
     """Deterministic facts about what a move concretely does.
 
@@ -251,6 +276,11 @@ def move_consequences(board: chess.Board, move: chess.Move) -> str:
             attacked.append(f"{chess.piece_name(p.piece_type)} on {chess.square_name(sq)}")
     lines.append(f"- From {dname} it attacks: "
                  + (", ".join(attacked) if attacked else "NO enemy pieces"))
+    if len(attacked) >= 2:
+        lines.append(f"- This IS a fork: it attacks {len(attacked)} enemy pieces at once.")
+    else:
+        lines.append(f"- This is NOT a fork: it attacks only {len(attacked)} enemy piece"
+                     f"{'s' if len(attacked) != 1 else ''} — do not call it a fork.")
 
     defended = bool(after.attackers(mover, dest))
     attacked_back = bool(after.attackers(not mover, dest))

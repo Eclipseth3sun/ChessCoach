@@ -12,7 +12,7 @@ import chess
 import chess.engine
 import chess.pgn
 
-from . import db, settings
+from . import db, features, settings
 
 ENGINE_PATH = Path(__file__).resolve().parent.parent / "engines" / "stockfish.exe"
 
@@ -316,10 +316,16 @@ def key_moments(moves: list[dict], user_color: str | None,
     return all_moments
 
 
+_DECISIVE_CP = 500  # |eval| beyond which the game is effectively decided; fast play there is fine
+
+
 def time_report(moves: list[dict], user_color: str | None) -> dict | None:
-    """Time-usage analysis for the user's moves: pace, unused clock, and mistakes
-    played quickly. Targets the 'I rush and blunder despite having time' failure mode.
-    Returns None when the game has no clock data.
+    """Time-usage analysis, phase-aware. Real thinking time follows a U-curve —
+    fast openings (theory), slow middlegames (the hard decisions), fast endgames
+    (forced/obvious or low clock) — so a flat 'early vs late' pace is misleading.
+    We instead report per-phase pace, flag fast errors ONLY in still-competitive
+    positions (not won-endgame conversions), and surface genuine time trouble
+    (low clock) separately. Returns None when the game has no clock data.
     """
     def is_user(m):
         return user_color is None or (user_color == "white") == (m["ply"] % 2 == 1)
@@ -328,27 +334,54 @@ def time_report(moves: list[dict], user_color: str | None) -> dict | None:
     if len(um) < 6:
         return None
 
+    eval_by_ply = {m["ply"]: m for m in moves}
+
+    def cp_before(m):
+        prev = eval_by_ply.get(m["ply"] - 1)
+        if prev is None:
+            return 0
+        if prev["eval_mate"] is not None:
+            return 10000 if prev["eval_mate"] > 0 else -10000
+        return prev["eval_cp"] or 0
+
     times = [m["time_spent"] for m in um]
     avg = sum(times) / len(times)
-    # pace: first third vs last third of the user's moves
-    third = max(1, len(um) // 3)
-    early = sum(times[:third]) / third
-    late = sum(times[-third:]) / third
-    unused = um[-1].get("clock_left")
 
-    # mistakes/blunders played quickly (absolute, the clearest "didn't think" signal)
+    # per-phase average think time (the honest "curve")
+    phase_times: dict[str, list[float]] = {"opening": [], "middlegame": [], "endgame": []}
+    for m in um:
+        try:
+            ph = features.game_phase(chess.Board(m["fen_after"]))
+        except Exception:
+            ph = "middlegame"
+        phase_times[ph].append(m["time_spent"])
+    phase_avg = {k: (round(sum(v) / len(v), 1) if v else None) for k, v in phase_times.items()}
+
+    # "rushed" = an error played fast RELATIVE TO your real thinking pace (half your
+    # middlegame tempo), in a still-competitive position. This excludes (a) won-endgame
+    # conversions / forced moves (decisive eval), and (b) errors you actually thought
+    # about — a 17s blunder is a judgement error, not a clock-rush.
+    ref_pace = phase_avg.get("middlegame") or avg
+    fast_cut = min(15.0, 0.5 * ref_pace)
     rushed = [
         {"ply": m["ply"], "san": m["san"], "classification": m["classification"],
          "time_spent": m["time_spent"], "win_pct_loss": m.get("win_pct_loss")}
         for m in um
         if m["classification"] in ("inaccuracy", "mistake", "blunder")
-        and m["time_spent"] is not None and m["time_spent"] < 25
+        and m["time_spent"] < fast_cut
+        and abs(cp_before(m)) < _DECISIVE_CP
     ]
+
+    # genuine time trouble: how low the clock got, vs the game's base time
+    clocks = [m["clock_left"] for m in um if m.get("clock_left") is not None]
+    base = max(clocks) if clocks else None  # ~= starting clock
+    low_clock = min(clocks) if clocks else None
+    trouble_threshold = max(10.0, base * 0.05) if base else 15.0
     return {
         "avg": round(avg, 1),
-        "early_avg": round(early, 1),
-        "late_avg": round(late, 1),
-        "sped_up": late < 0.7 * early and early - late >= 10,
-        "unused_secs": round(unused, 1) if unused is not None else None,
+        "phase_avg": phase_avg,
         "rushed": rushed,
+        "low_clock_secs": round(low_clock, 1) if low_clock is not None else None,
+        "time_trouble": bool(low_clock is not None and low_clock < trouble_threshold),
+        "unused_secs": round(um[-1].get("clock_left"), 1) if um[-1].get("clock_left") is not None else None,
     }

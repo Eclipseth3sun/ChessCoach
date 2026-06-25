@@ -7,14 +7,13 @@ const BADGES = {
   blunder: '??',
 }
 
-const RUSH_THRESHOLD = 25  // seconds — a mistake played faster than this is flagged
-
-function Move({ move, currentPly, onSelect }) {
+function Move({ move, currentPly, rushedPlies, onSelect }) {
   if (!move) return <span />
   const badge = BADGES[move.classification]
   const hasTime = badge && move.time_spent != null
-  const rushed = move.time_spent != null && move.time_spent < RUSH_THRESHOLD
-    && ['inaccuracy', 'mistake', 'blunder'].includes(move.classification)
+  // "rushed" is decided server-side (fast for the position + still competitive),
+  // so a correct fast endgame move is never flagged.
+  const rushed = rushedPlies?.has(move.ply)
   return (
     <span
       className={`move ${move.ply === currentPly ? 'current' : ''}`}
@@ -28,7 +27,7 @@ function Move({ move, currentPly, onSelect }) {
   )
 }
 
-export default function MoveList({ moves, currentPly, onSelect }) {
+export default function MoveList({ moves, currentPly, rushedPlies, onSelect }) {
   const rows = []
   for (let i = 0; i < moves.length; i += 2) {
     rows.push({ num: i / 2 + 1, white: moves[i], black: moves[i + 1] })
@@ -36,18 +35,18 @@ export default function MoveList({ moves, currentPly, onSelect }) {
   return (
     <div className="moves">
       {rows.map((r) => (
-        <FragmentRow key={r.num} row={r} currentPly={currentPly} onSelect={onSelect} />
+        <FragmentRow key={r.num} row={r} currentPly={currentPly} rushedPlies={rushedPlies} onSelect={onSelect} />
       ))}
     </div>
   )
 }
 
-function FragmentRow({ row, currentPly, onSelect }) {
+function FragmentRow({ row, currentPly, rushedPlies, onSelect }) {
   return (
     <>
       <span className="num">{row.num}.</span>
-      <Move move={row.white} currentPly={currentPly} onSelect={onSelect} />
-      <Move move={row.black} currentPly={currentPly} onSelect={onSelect} />
+      <Move move={row.white} currentPly={currentPly} rushedPlies={rushedPlies} onSelect={onSelect} />
+      <Move move={row.black} currentPly={currentPly} rushedPlies={rushedPlies} onSelect={onSelect} />
     </>
   )
 }

@@ -112,9 +112,11 @@ You are given an EVALUATION SCOREBOARD. Your opening_summary MUST agree with it 
 better — never say you came out of the opening worse if the scoreboard shows you winning, or
 vice versa.
 
-If a TIME USAGE section is provided and it shows the student rushing (sped up, mistakes played
-quickly, or lots of unused clock), include ONE takeaway about spending time on critical moves —
-specifically a pre-move check for hanging pieces, checks, and captures. Cite the real numbers.
+If a TIME USAGE section shows a genuine problem — real time trouble (clock got very low) OR
+errors rushed in still-competitive positions — include ONE takeaway about it, citing the real
+numbers (e.g. "you reached time trouble with Ns left" or "you rushed move X"). A fast endgame or
+fast opening is normal and correct; do NOT scold the student for it or invent a rushing problem
+that the data doesn't show.
 
 Respond with a SINGLE JSON object using EXACTLY these keys:
 {{
@@ -298,14 +300,18 @@ def _summary_user_prompt(game: dict, user_color: str, moments_out: list[dict],
     if tr:
         rushed = "; ".join(
             f"{r['san']} ({r['classification']}, {r['time_spent']:.0f}s)" for r in tr["rushed"]
-        ) or "none under 25s"
-        unused = f"{tr['unused_secs'] / 60:.1f} min" if tr["unused_secs"] is not None else "unknown"
+        ) or "none"
+        pa = tr["phase_avg"]
+        pace = " · ".join(f"{ph} {pa[ph]:.0f}s" for ph in ("opening", "middlegame", "endgame")
+                          if pa.get(ph) is not None)
+        trouble = (f"YES — clock got down to {tr['low_clock_secs']:.0f}s"
+                   if tr["time_trouble"] else "no")
         time_block = (
-            "TIME USAGE (clock data from the game):\n"
-            f"- Average {tr['avg']:.0f}s/move; early {tr['early_avg']:.0f}s vs late {tr['late_avg']:.0f}s "
-            f"({'SPED UP markedly in the second half' if tr['sped_up'] else 'fairly steady'}).\n"
-            f"- Clock left unused at the end: {unused}.\n"
-            f"- Mistakes played quickly (<25s): {rushed}.\n\n"
+            "TIME USAGE (clock data; thinking time naturally follows a U-curve: fast opening, "
+            "slow middlegame, fast endgame — do NOT treat a fast endgame as rushing):\n"
+            f"- Pace by phase: {pace} per move.\n"
+            f"- Time trouble: {trouble}.\n"
+            f"- Errors rushed in a still-competitive position (the real lapses): {rushed}.\n\n"
         )
     return (
         f"Student: {user_name} ({user_elo or '?'} elo), playing {user_color}.\n"

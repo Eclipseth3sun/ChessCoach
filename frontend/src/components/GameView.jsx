@@ -326,14 +326,15 @@ export default function GameView({ gameId }) {
             {game.opening || game.eco} · {game.time_control} · {(game.played_at || '').slice(0, 10)}
           </div>
           {analyzed && game.time_report && (
-            <div className={`time-usage ${game.time_report.sped_up ? 'warn' : ''}`}>
-              ⏱ {Math.round(game.time_report.avg)}s/move avg
-              {game.time_report.sped_up &&
-                ` · sped up ${Math.round(game.time_report.early_avg)}→${Math.round(game.time_report.late_avg)}s`}
-              {game.time_report.unused_secs != null &&
-                ` · ${Math.round(game.time_report.unused_secs / 60)} min unused`}
+            <div className={`time-usage ${game.time_report.time_trouble || game.time_report.rushed.length > 0 ? 'warn' : ''}`}>
+              ⏱ {['opening', 'middlegame', 'endgame']
+                .filter((p) => game.time_report.phase_avg?.[p] != null)
+                .map((p) => `${p.slice(0, 4)} ${Math.round(game.time_report.phase_avg[p])}s`)
+                .join(' · ')}/move
+              {game.time_report.time_trouble &&
+                ` · time trouble (${Math.round(game.time_report.low_clock_secs)}s left)`}
               {game.time_report.rushed.length > 0 &&
-                ` · ${game.time_report.rushed.length} rushed mistake${game.time_report.rushed.length > 1 ? 's' : ''}`}
+                ` · ${game.time_report.rushed.length} rushed error${game.time_report.rushed.length > 1 ? 's' : ''}`}
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
@@ -382,7 +383,12 @@ export default function GameView({ gameId }) {
                 {' '}<strong>? mistake</strong> · <strong>?? blunder</strong>.
               </InfoTip>
             </h3>
-            <MoveList moves={moves} currentPly={ply} onSelect={(p) => { setVariation(null); setPly(p) }} />
+            <MoveList
+              moves={moves}
+              currentPly={ply}
+              rushedPlies={new Set((game.time_report?.rushed || []).map((r) => r.ply))}
+              onSelect={(p) => { setVariation(null); setPly(p) }}
+            />
           </div>
         )}
 
